@@ -37,7 +37,10 @@ export async function activate(context: vscode.ExtensionContext) {
   controller = new ExtensionController();
 
   // Initialize chat models cache
-  chatModelsCache.initialize();
+  context.subscriptions.push(
+    vscode.lm.onDidChangeChatModels(() => chatModelsCache.invalidate()),
+  );
+  void chatModelsCache.initialize();
 
   try {
     await controller.initialize();

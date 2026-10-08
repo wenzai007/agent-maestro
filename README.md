@@ -101,6 +101,8 @@ Run **Agent Maestro: Select Fallback Model** to choose a model for requests whos
 
 `GET /api/v1/lm/chatModels` lists models discovered by VS Code, including vendors that may not be proxy-eligible. The Output channel distinguishes eligible Copilot models.
 
+New Copilot models are discovered automatically when VS Code reports a model change. Opening a model picker also refreshes the list. If a requested model ID is missing from the cache, Agent Maestro checks the current catalog before trying fuzzy matching or fallback, so a newly available model does not get routed to an older one because of a stale cache.
+
 ## Configuration
 
 Use VS Code settings for the following options. Port and default-Roo settings can be set per workspace; the other settings have application scope.

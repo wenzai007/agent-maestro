@@ -113,14 +113,15 @@ suite("Model Resolution Test Suite", () => {
       const configuration = vscode.workspace.getConfiguration("agent-maestro");
       const previousFallbackModelId =
         configuration.inspect<string>("fallbackModelId")?.globalValue;
-      const originalGetChatModels = chatModelsCache.getChatModels;
+      const lm = vscode.lm as {
+        selectChatModels: typeof vscode.lm.selectChatModels;
+      };
+      const originalSelect = lm.selectChatModels;
+      const originalModels = chatModelsCache.getCachedModels();
 
       try {
-        chatModelsCache.getChatModels = async () => [
-          sameVersionAsAuto,
-          configured,
-          auto,
-        ];
+        lm.selectChatModels = async () => [sameVersionAsAuto, configured, auto];
+        await chatModelsCache.refresh();
         await configuration.update(
           "fallbackModelId",
           configured.id,
@@ -146,16 +147,16 @@ suite("Model Resolution Test Suite", () => {
           undefined,
           vscode.ConfigurationTarget.Global,
         );
-        chatModelsCache.getChatModels = async () => [
-          sameVersionAsAuto,
-          configured,
-        ];
+        lm.selectChatModels = async () => [sameVersionAsAuto, configured];
+        chatModelsCache.invalidate();
         assert.strictEqual(
           (await getChatModelClient("codex-auto-review")).client,
           sameVersionAsAuto,
         );
       } finally {
-        chatModelsCache.getChatModels = originalGetChatModels;
+        lm.selectChatModels = async () => originalModels;
+        await chatModelsCache.refresh();
+        lm.selectChatModels = originalSelect;
         await configuration.update(
           "fallbackModelId",
           previousFallbackModelId,

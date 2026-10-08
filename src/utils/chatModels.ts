@@ -31,6 +31,7 @@ class ChatModelsCache {
   private static instance: ChatModelsCache;
   private cachedModels: vscode.LanguageModelChat[] = [];
   private initializationPromise: Promise<void> | null = null;
+  private needsRefresh = true;
   private hasShownNoClaudeWarning = false;
 
   private constructor() {}
@@ -43,18 +44,34 @@ class ChatModelsCache {
   }
 
   async initialize(): Promise<void> {
-    if (this.cachedModels.length > 0) {
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
+
+    if (this.cachedModels.length > 0 && !this.needsRefresh) {
       return;
     }
 
+    await this.refresh();
+  }
+
+  invalidate(): void {
+    this.needsRefresh = true;
+  }
+
+  async refresh(): Promise<void> {
     if (this.initializationPromise) {
       return this.initializationPromise;
     }
 
     this.initializationPromise = (async () => {
       try {
-        logger.info("Initializing chat models cache...");
-        this.cachedModels = await selectSupportedModels();
+        logger.info("Refreshing chat models cache...");
+        // A provider change during discovery requires another snapshot.
+        do {
+          this.needsRefresh = false;
+          this.cachedModels = await selectSupportedModels();
+        } while (this.needsRefresh);
 
         // Check for Claude models availability and show warning once if none found
         if (this.cachedModels.length > 0 && !this.hasShownNoClaudeWarning) {
@@ -69,8 +86,8 @@ class ChatModelsCache {
           }
         }
       } catch (error) {
-        logger.error("Failed to initialize chat models cache:", error);
-        this.cachedModels = [];
+        logger.error("Failed to refresh chat models cache:", error);
+        this.needsRefresh = true;
       } finally {
         this.initializationPromise = null;
       }
@@ -80,18 +97,8 @@ class ChatModelsCache {
   }
 
   async getChatModels(): Promise<vscode.LanguageModelChat[]> {
-    if (this.cachedModels.length > 0) {
-      return this.cachedModels;
-    }
-
     await this.initialize();
     return this.cachedModels;
-  }
-
-  async refresh(): Promise<void> {
-    this.cachedModels = [];
-    this.initializationPromise = null;
-    await this.initialize();
   }
 
   getCachedModels(): vscode.LanguageModelChat[] {
@@ -145,8 +152,8 @@ function getFamilyLabel(family: ModelFamily): string {
 export const getChatModelsQuickPickItems = async (
   options?: GetChatModelsOptions,
 ) => {
-  // Get available models from cache first, fallback to direct API call
-  let allModels = await chatModelsCache.getChatModels();
+  await chatModelsCache.refresh();
+  const allModels = chatModelsCache.getCachedModels();
   if (allModels.length === 0) {
     return [];
   }
@@ -368,18 +375,22 @@ function findBestMatch(
  *
  * This function handles:
  * 1. Exact match lookup
- * 2. Fuzzy matching using Jaccard similarity
- * 3. Configured fallback model
- * 4. Fallback to "auto" or first available model
- *
- * Note: We don't refresh the cache if a model isn't found because vscode.lm.selectChatModels()
- * doesn't update dynamically when network state changes - the VS Code API returns the same
- * cached results regardless of VPN/network changes during the session.
+ * 2. Refresh and retry an exact match before substituting another model
+ * 3. Fuzzy matching using Jaccard similarity
+ * 4. Configured fallback model
+ * 5. Fallback to "auto" or first available model
  */
 export const getChatModelClient = async (modelId: string) => {
-  const models = await chatModelsCache.getChatModels();
+  let models = await chatModelsCache.getChatModels();
 
   let client = models.find((model) => model.id === modelId);
+  if (client) {
+    return { client };
+  }
+
+  await chatModelsCache.refresh();
+  models = chatModelsCache.getCachedModels();
+  client = models.find((model) => model.id === modelId);
   if (client) {
     return { client };
   }
